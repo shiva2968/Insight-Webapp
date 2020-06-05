@@ -40,13 +40,16 @@ def success():
         mm = image_to_sum(f.filename)   
         return render_template("success.html", name = mm) #f.filename)  
 
-def image_to_sum(img):  
-      img = cv.imread(img)
-      gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-      sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-      sharpen = cv.filter2D(gray, -1, sharpen_kernel)
-      img = Image.fromarray(sharpen)
-      raw_text = pytesseract.image_to_string(img)
+def image_to_sum(img):
+      try:
+            img = cv.imread(img)
+            gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+            sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpen = cv.filter2D(gray, -1, sharpen_kernel)
+            img = Image.fromarray(sharpen)
+            raw_text = pytesseract.image_to_string(img)
+      except:
+            raw_text = 'Wrong format!'
       return raw_text
 
 
