@@ -2,125 +2,106 @@ from flaskexample import app
 from flask import Flask, render_template, redirect, url_for, request
 from flask import render_template
 from werkzeug.exceptions import abort
+from werkzeug.utils import secure_filename
+
+import os
+import re
+import torch
+import nltk
+import heapq
+import requests 
+import urllib
+import pandas as pd
 import cv2 as cv
 import numpy as np
 from PIL import Image
 import pytesseract
-
-import re
-import nltk
-import heapq
+import matplotlib.pyplot as plt
 import networkx as nx
-from io import StringIO
 import bs4 as bs
 from nltk.corpus import stopwords
 from nltk.cluster.util import cosine_distance
-from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
-from pdfminer.converter import TextConverter
-from pdfminer.layout import LAParams
-from pdfminer.pdfpage import PDFPage
 from io import StringIO
 from gensim.summarization import summarize
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+from tqdm.notebook import tqdm
+from scipy.special import softmax
+from transformers import pipeline
+from transformers import BartTokenizer, BartForConditionalGeneration
+from transformers import BertTokenizer, BertForSequenceClassification
+from transformers import T5Tokenizer, T5ForConditionalGeneration, AdamW
+device = torch.device('cpu')
 
 
 
-#@app.route('/')
-#@app.route('/index')
-#def index():
-#  return "Hello, World!"
 
-#@app.route('/', methods=['GET', 'POST'])
-#def home():
-#    return render_template('upload.html')
+ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg', 'gif'])
 
-@app.route('/')  
-def upload():  
-    return render_template("file_upload_form.html")  
- 
+def allowed_file(filename):
+	return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+	
+@app.route('/')
+def upload_form():
+	return render_template('index.html')
+
+
 @app.route('/success', methods = ['POST'])  
 def success():  
     if request.method == 'POST':  
-        f = request.files['file'] 
-        f.save(f.filename)
-        mm = image_to_sum(f.filename)   
-        return render_template("success.html", name = mm) #f.filename)  
+        file = request.files['file'] 
+        filename = secure_filename(file.filename)
+        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        txt = image_to_txt(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        smry = smry_gen(os.path.join(app.config['UPLOAD_FOLDER'], filename))   
+        return render_template("success.html", text=txt, summary=smry, filename=filename) 
 
 
-#def image_to_sum(img):
-#      try:
-#            img = cv.imread(img)
-#            gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-#            sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-#            sharpen = cv.filter2D(gray, -1, sharpen_kernel)
-#            img = Image.fromarray(sharpen)
-#            raw_text = pytesseract.image_to_string(img)
-#      except:
-#            raw_text = 'Wrong format!'
-#      return raw_text
-
-
-
-
-def image_to_sum(img):
+@app.route('/display/<filename>')
+def display_image(filename):
+	#print('display_image filename: ' + filename)
+	return redirect(url_for('static', filename='uploads/' + filename), code=301)
+         
+def image_to_txt(img):
       img_ext = ['jpg', 'jpeg', 'png', 'gif', 'tiff']
       if (img.split(".")[1].casefold() not in img_ext):
             return 'Wrong format'
-
-#__________PROCESSING THE IMAGE__________
       img = cv.imread(img)
       gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-      sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-      sharpen = cv.filter2D(gray, -1, sharpen_kernel)
-      img = Image.fromarray(sharpen)
+      gray = cv.bitwise_not(gray)      
+      kernel = np.ones((2, 1), np.uint8)
+      img = cv.erode(gray, kernel, iterations=1)
+      img = cv.dilate(img, kernel, iterations=1)
       raw_text = pytesseract.image_to_string(img)
-
-#__________PROCESSING THE TEXT__________
-      txt = re.sub(r'\n', ' ', raw_text)
-      txt = re.sub(r'\[[0-9]*\]', ' ', txt)
-      txt = re.sub(r'\s+', ' ', txt)
-      txt = re.sub(r'\s+', ' ', txt)
-      
-#__________SUMMARY 0__________
-      summary_0 = summarize(txt)
-
-#__________SUMMARY 1__________
-      sum_len = 3
-      formatted_raw_text = re.sub('[^a-zA-Z]', ' ', raw_text)
-      sentence_list = nltk.sent_tokenize(raw_text)
-      stop_words = stopwords.words('english')
-
-      word_frequencies = {}
-      for word in nltk.word_tokenize(formatted_raw_text):
-          if word not in stop_words:
-              if word not in word_frequencies.keys():
-                  word_frequencies[word] = 1
-              else:
-                  word_frequencies[word] += 1
+      return(raw_text)
 
 
-      maximum_frequncy = max(word_frequencies.values())
-
-      for word in word_frequencies.keys():
-          word_frequencies[word] = (word_frequencies[word]/maximum_frequncy)
-
-
-      sentence_scores = {}
-      for sent in sentence_list:
-          for word in nltk.word_tokenize(sent.lower()):
-              if word in word_frequencies.keys():
-                  if len(sent.split(' ')) < 30:
-                      if sent not in sentence_scores.keys():
-                          sentence_scores[sent] = word_frequencies[word]
-                      else:
-                          sentence_scores[sent] += word_frequencies[word]
-
-
-      summary_sentences = heapq.nlargest(sum_len, sentence_scores, key = sentence_scores.get)
-
-      summary_1 = ' '.join(summary_sentences)
-      return summary_1
-
-
-
+def smry_gen(img):
+      raw_text = image_to_txt(img)
+      if (raw_text==''):
+            return 'No text is found'
+      if (raw_text=='Wrong format'):
+            return 'Wrong format'
+      text = re.sub(r'\n', ' ', raw_text)
+      text = re.sub(r'\[[0-9]*\]', ' ', text)
+      text = re.sub(r'\s+', ' ', text)
+      text = re.sub(r'\s+', ' ', text)
+      text = re.sub(r'\b-\b', '', text)
+      tokenizer = T5Tokenizer.from_pretrained('t5-small')
+      #model = T5ForConditionalGeneration.from_pretrained('t5-small').to(device)
+      #optimizer = AdamW(model.parameters(), lr=3e-5)
+      #directory = 't5-finetuned_3'
+      #model.load_state_dict(torch.load(os.path.join(directory,'filename.pth')))
+      #model.eval()
+      #text_token = tokenizer.encode(text, return_tensors='pt', max_length=512).to(device)
+      #smry = model.generate(text_token, max_length=100, num_beams=3, no_repeat_ngram_size=3)[0]
+      #smry = tokenizer.decode(smry, skip_special_tokens=True)
+      summarizer = pipeline('summarization')
+      tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
+      text_token = tokenizer.encode(text, return_tensors='pt', max_length=512)
+      smry = summarizer(text, max_length=text_token.shape[1])[0]['summary_text']
+      return smry
 
 
