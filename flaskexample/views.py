@@ -11,27 +11,19 @@ import nltk
 import heapq
 import requests 
 import urllib
-import pandas as pd
 import cv2 as cv
 import numpy as np
 from PIL import Image
 import pytesseract
-import matplotlib.pyplot as plt
-import networkx as nx
-import bs4 as bs
 from nltk.corpus import stopwords
 from nltk.cluster.util import cosine_distance
 from io import StringIO
-from gensim.summarization import summarize
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
 from torch.utils.tensorboard import SummaryWriter
 from tensorboardX import SummaryWriter
 from tqdm.notebook import tqdm
 from scipy.special import softmax
 from transformers import pipeline
 from transformers import BartTokenizer, BartForConditionalGeneration
-from transformers import BertTokenizer, BertForSequenceClassification
 from transformers import T5Tokenizer, T5ForConditionalGeneration, AdamW
 device = torch.device('cpu')
 
@@ -42,6 +34,7 @@ ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg', 'gif'])
 
 def allowed_file(filename):
 	return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 	
 @app.route('/')
 def upload_form():
@@ -55,7 +48,11 @@ def success():
         filename = secure_filename(file.filename)
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
         txt = image_to_txt(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        smry = smry_gen(os.path.join(app.config['UPLOAD_FOLDER'], filename))   
+        smry = smry_gen(os.path.join(app.config['UPLOAD_FOLDER'], filename)) 
+        if  txt== 'Wrong format':
+            return render_template("failure.html")
+        if  smry== 'No text is found':
+            return render_template("success.html", text='No text is found', summary='', filename=filename) 
         return render_template("success.html", text=txt, summary=smry, filename=filename) 
 
 
@@ -89,18 +86,17 @@ def smry_gen(img):
       text = re.sub(r'\s+', ' ', text)
       text = re.sub(r'\s+', ' ', text)
       text = re.sub(r'\b-\b', '', text)
+      model = T5ForConditionalGeneration.from_pretrained('t5-small').to(device)
       tokenizer = T5Tokenizer.from_pretrained('t5-small')
-      #model = T5ForConditionalGeneration.from_pretrained('t5-small').to(device)
-      #optimizer = AdamW(model.parameters(), lr=3e-5)
-      #directory = 't5-finetuned_3'
-      #model.load_state_dict(torch.load(os.path.join(directory,'filename.pth')))
-      #model.eval()
-      #text_token = tokenizer.encode(text, return_tensors='pt', max_length=512).to(device)
-      #smry = model.generate(text_token, max_length=100, num_beams=3, no_repeat_ngram_size=3)[0]
+      #tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
+      optimizer = AdamW(model.parameters(), lr=3e-5)
+      directory = 't5-finetuned_3'
+      model.load_state_dict(torch.load(os.path.join(directory,'filename.pth')))
+      model.eval()
+      text_token = tokenizer.encode(text, return_tensors='pt', max_length=512).to(device)
+      #smry = model.generate(text_token, max_length=text_token.shape[1], num_beams=3, no_repeat_ngram_size=3)[0]
       #smry = tokenizer.decode(smry, skip_special_tokens=True)
-      summarizer = pipeline('summarization')
-      tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
-      text_token = tokenizer.encode(text, return_tensors='pt', max_length=512)
+      summarizer = pipeline("summarization")    
       smry = summarizer(text, max_length=text_token.shape[1])[0]['summary_text']
       return smry
 
