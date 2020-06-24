@@ -90,7 +90,7 @@ def smry_gen(img):
       tokenizer = T5Tokenizer.from_pretrained('t5-small')
       #tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
       optimizer = AdamW(model.parameters(), lr=3e-5)
-      directory = 't5-finetuned_3'
+      directory = 't5-finetuned'
       model.load_state_dict(torch.load(os.path.join(directory,'filename.pth')))
       model.eval()
       text_token = tokenizer.encode(text, return_tensors='pt', max_length=512).to(device)
